@@ -1,0 +1,99 @@
+PROJECT: phpBB (PHPBB)
+ISSUE TYPE: Improvement
+SUMMARY: New PHP event core.viewtopic_modify_view_counter_update
+PRIORITY: Minor
+COMPONENT: Events
+AFFECTS VERSION: 3.3.x
+
+TYPE
+====
+PHP event
+
+LOCATION
+========
+viewtopic.php, directly after the post loop ends (after
+unset($rowset, $user_cache);), at the "Update topic view and if
+necessary attachment view counters" block. The existing condition is
+moved into a variable so listeners can change it; the counting itself
+is unchanged:
+
+	unset($rowset, $user_cache);
+
+	// Update topic view and if necessary attachment view counters ... but only for humans and if this is the first 'page view'
+	$update_view_counters = isset($user->data['session_page']) && !$user->data['is_bot'] && (strpos($user->data['session_page'], '&t=' . $topic_id) === false || isset($user->data['session_created']));
+
+	/**
+	* Modify whether the topic view counter and attachment download
+	* counters are updated for this page view
+	*
+	* @event core.viewtopic_modify_view_counter_update
+	* @var bool		update_view_counters	Whether to increase the topic view count and the attachment download counts
+	* @var array	update_count			IDs of the attachments whose download count will be increased
+	* @var int		forum_id				Forum ID
+	* @var int		topic_id				Topic ID
+	* @var array	topic_data				Array with topic data
+	* @since to be filled in by the phpBB dev team at merge time
+	*/
+	$vars = array(
+		'update_view_counters',
+		'update_count',
+		'forum_id',
+		'topic_id',
+		'topic_data',
+	);
+	extract($phpbb_dispatcher->trigger_event('core.viewtopic_modify_view_counter_update', compact($vars)));
+
+	if ($update_view_counters)
+	{
+		$sql = 'UPDATE ' . TOPICS_TABLE . '
+			SET topic_views = topic_views + 1, topic_last_view_time = ' . time() . "
+			WHERE topic_id = $topic_id";
+		$db->sql_query($sql);
+
+		// Update the attachment download counts
+		if (count($update_count))
+		{
+			...
+
+The code at this spot is the same on 3.3.x and master, so the change
+should merge forward without conflict.
+
+PURPOSE
+=======
+Let extensions decide whether a page view adds to a topic's view count
+(and to the download counts of attachments shown inline on that page).
+
+USE CASE
+========
+Board owners have asked for years for some views not to count:
+
+- an admin setting up forums, checking permissions or editing many
+  imported posts adds hundreds of views to topics nobody else has read;
+- a topic author can push up the view count of their own topic just by
+  reloading it.
+
+The only answer today is to edit the condition in viewtopic.php by hand
+and redo the edit after every phpBB update. Recent example (phpBB
+3.3.19): https://www.phpbb.com/community/viewtopic.php?p=16140973#p16140973
+
+phpbbmodders/viewcountexempt will use this event to skip the count for
+users or groups given a "views do not count" permission, for topic
+authors on their own topics, and for admins, each set in the ACP.
+
+No existing event can do this. core.viewtopic_post_row_after and the
+other viewtopic events fire before the counter update but cannot change
+its condition. The only workarounds are changing $user->data
+['session_page'] so the check thinks the topic was already viewed (which
+other code may read later), or taking the view back off with a second
+UPDATE afterwards (an extra query on every topic view, and racy).
+
+VARIABLES
+=========
+- update_view_counters (bool, read/write) - whether to increase the
+  topic view count and the attachment download counts
+- update_count (array, read/write) - IDs of the attachments whose
+  download count will be increased; a listener can change it to count
+  topic views but not downloads
+- forum_id (int, read-only) - forum ID
+- topic_id (int, read-only) - topic ID
+- topic_data (array, read-only) - topic data, including topic_poster
