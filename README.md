@@ -19,7 +19,7 @@ Requested on phpBB.com: [Prevent view count increasing](https://www.phpbb.com/co
 ## Requirements
 
 - phpBB 3.3.19 or later (plus the phpBB release that adds the event above)
-- PHP 7.4 or later
+- PHP 8.1 or later
 
 ## TODO
 
